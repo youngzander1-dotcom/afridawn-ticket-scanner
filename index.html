@@ -1,0 +1,221 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AfriDawn Carnival Scanner</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
+
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f1f4f8;
+  margin: 0;
+  padding: 20px;
+  color: #17365D;
+}
+.container {
+  max-width: 500px;
+  margin: auto;
+}
+header {
+  background: #17365D;
+  color: white;
+  padding: 25px;
+  text-align: center;
+  border-radius: 14px;
+}
+.panel {
+  background: white;
+  padding: 20px;
+  margin-top: 20px;
+  border-radius: 14px;
+}
+#reader {
+  width: 100%;
+}
+#result {
+  padding: 18px;
+  margin-top: 15px;
+  border-radius: 10px;
+  text-align: center;
+  font-weight: bold;
+  white-space: pre-line;
+}
+.valid { background: #d9ead3; color: #274e13; }
+.bad { background: #f4cccc; color: #990000; }
+.neutral { background: #eaf0f6; color: #17365D; }
+button {
+  width: 100%;
+  padding: 17px;
+  margin-top: 15px;
+  border: 0;
+  border-radius: 9px;
+  background: #2F75B5;
+  color: white;
+  font-size: 17px;
+  font-weight: bold;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+
+<header>
+  <h2>AFRIDAWN COLLEGE</h2>
+  <p>Carnival Day – Ticket Check-in</p>
+</header>
+
+<div class="panel">
+  <h3>Ticket Scanner</h3>
+  <p>Point your camera at the QR code on the ticket.</p>
+
+  <div id="reader"></div>
+
+  <div id="result" class="neutral">
+    Scanner ready. Press the button to start.
+  </div>
+
+  <button id="startButton" onclick="startScanner()">
+    START SCANNER
+  </button>
+</div>
+</div>
+
+<script>
+const API_URL = "PASTE_YOUR_APPS_SCRIPT_WEB_APP_URL_HERE";
+
+let scanner = null;
+let busy = false;
+
+function showResult(type, message) {
+  const box = document.getElementById("result");
+  box.className = type;
+  box.textContent = message;
+}
+
+function redeemTicket(token) {
+  return new Promise((resolve, reject) => {
+    const callbackName = "receive_" + Date.now();
+
+    window.AfriDawnCallbacks =
+      window.AfriDawnCallbacks || {};
+
+    const timeout = setTimeout(() => {
+      delete window.AfriDawnCallbacks[callbackName];
+      script.remove();
+      reject(new Error("Ticket server timed out."));
+    }, 20000);
+
+    window.AfriDawnCallbacks[callbackName] = (data) => {
+      clearTimeout(timeout);
+      delete window.AfriDawnCallbacks[callbackName];
+      script.remove();
+      resolve(data);
+    };
+
+    const script = document.createElement("script");
+
+    script.onerror = () => {
+      clearTimeout(timeout);
+      delete window.AfriDawnCallbacks[callbackName];
+      script.remove();
+      reject(new Error("Could not connect to ticket server."));
+    };
+
+    script.src =
+      API_URL +
+      "?action=redeem" +
+      "&token=" + encodeURIComponent(token) +
+      "&callback=" + encodeURIComponent(
+        "AfriDawnCallbacks." + callbackName
+      );
+
+    document.body.appendChild(script);
+  });
+}
+
+async function startScanner() {
+  try {
+    if (!API_URL.startsWith("https://")) {
+      throw new Error("Ticket server URL has not been configured.");
+    }
+
+    if (typeof Html5Qrcode === "undefined") {
+      throw new Error("QR library failed to load. Check internet.");
+    }
+
+    if (!navigator.mediaDevices ||
+        !navigator.mediaDevices.getUserMedia) {
+      throw new Error("Camera access is unavailable in this browser.");
+    }
+
+    if (!scanner) {
+      scanner = new Html5Qrcode("reader");
+    }
+
+    busy = false;
+    showResult("neutral", "Opening camera...");
+
+    const cameras = await Html5Qrcode.getCameras();
+
+    if (!cameras.length) {
+      throw new Error("No camera detected.");
+    }
+
+    const rearCamera =
+      cameras.find(c => /back|rear|environment/i.test(c.label))
+      || cameras[cameras.length - 1];
+
+    await scanner.start(
+      rearCamera.id,
+      { fps: 10, qrbox: 220 },
+      async (decodedText) => {
+
+        if (busy) return;
+        busy = true;
+
+        showResult("neutral", "Ticket found. Checking...");
+
+        try {
+          await scanner.stop();
+
+          const response = await redeemTicket(decodedText);
+
+          if (response.status === "VALID") {
+            showResult(
+              "valid",
+              "✓ ADMISSION APPROVED\n" + response.ticketNumber
+            );
+          } else if (response.status === "USED") {
+            showResult(
+              "bad",
+              "✕ ALREADY USED\n" + response.ticketNumber
+            );
+          } else {
+            showResult(
+              "bad",
+              "✕ " + (response.message || "Invalid ticket")
+            );
+          }
+
+        } catch (error) {
+          showResult("bad", error.message);
+        }
+
+        document.getElementById("startButton").textContent =
+          "SCAN NEXT TICKET";
+      }
+    );
+
+    showResult("valid", "Camera started! Ready to scan.");
+
+  } catch (error) {
+    showResult("bad", "SCANNER ERROR: " + error.message);
+  }
+}
+</script>
+</body>
+</html>
